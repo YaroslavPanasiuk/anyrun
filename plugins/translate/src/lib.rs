@@ -73,7 +73,7 @@ fn get_matches(input: RString, state: &State) -> RVec<Match> {
         None => (None, lang_split),
     };
 
-    let dest = "lang"
+    let dest = "lang";
 
     if text.is_empty() {
         return RVec::new();
