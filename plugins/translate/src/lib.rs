@@ -41,8 +41,8 @@ fn init(config_dir: RString) -> State {
         client: Client::new(),
         runtime: Runtime::new().expect("Failed to create tokio runtime"),
         langs: vec![
-            ("", "English"),
-            ("", "Ukrainian"),
+            ("lang", "English"),
+            ("lang", "Ukrainian"),
         ],
     }
 }
@@ -72,6 +72,8 @@ fn get_matches(input: RString, state: &State) -> RVec<Match> {
         Some(split) => (Some(split.0), split.1),
         None => (None, lang_split),
     };
+
+    dest = "lang"
 
     if text.is_empty() {
         return RVec::new();
