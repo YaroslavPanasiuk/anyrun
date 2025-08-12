@@ -13,7 +13,7 @@ struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            prefix: "".to_string(),
+            prefix: ":".to_string(),
             max_entries: 3,
         }
     }
@@ -59,12 +59,35 @@ fn get_matches(input: RString, state: &State) -> RVec<Match> {
     }
 
     state.runtime.block_on(async move {
-        // Create a single async function we can reuse
+        // First detect the language
+        let detection = state.client
+            .get(format!(
+                "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=ld&q={}",
+                text
+            ))
+            .send()
+            .await;
+
+        let detected_lang = match detection {
+            Ok(response) => {
+                let json: serde_json::Value = response.json().await.unwrap_or_default();
+                json.get("src").and_then(|v| v.as_str()).unwrap_or("en")
+            }
+            Err(_) => "en",
+        };
+
+        // Create translation futures based on detected language
+        let (sl, tl) = if detected_lang == "uk" {
+            ("uk", "en")
+        } else {
+            ("en", "uk")
+        };
+
         async fn get_translation(
             client: &Client,
             name: &'static str,
-            sl: &'static str,
-            tl: &'static str,
+            sl: &str,
+            tl: &str,
             text: &str,
         ) -> (&'static str, reqwest::Result<reqwest::Response>) {
             (
@@ -79,11 +102,11 @@ fn get_matches(input: RString, state: &State) -> RVec<Match> {
             )
         }
 
-        // Create the futures for both translation directions
+        // Create the futures for both translation directions and auto-detect
         let futures = [
             get_translation(&state.client, "English → Ukrainian", "en", "uk", text),
             get_translation(&state.client, "Ukrainian → English", "uk", "en", text),
-            get_translation(&state.client, "Auto-detect", "auto", "auto", text),
+            get_translation(&state.client, "Auto-detect", sl, tl, text),
         ];
 
         let results = futures::future::join_all(futures).await;
@@ -109,12 +132,11 @@ fn get_matches(input: RString, state: &State) -> RVec<Match> {
                                     .collect::<Vec<_>>()
                                     .join(" ");
                                 
-                                let detected_lang = json[2].as_str().expect("Malformed JSON!");
                                 let description = if name == "Auto-detect" {
                                     let direction = if detected_lang == "en" {
-                                        "Ukrainian → English"
-                                    } else {
                                         "English → Ukrainian"
+                                    } else {
+                                        "Ukrainian → English"
                                     };
                                     format!("{} (detected: {})", direction, detected_lang)
                                 } else {
