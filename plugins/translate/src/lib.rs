@@ -13,7 +13,7 @@ struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            prefix: ":".to_string(),
+            prefix: "".to_string(),
             max_entries: 3,
         }
     }
