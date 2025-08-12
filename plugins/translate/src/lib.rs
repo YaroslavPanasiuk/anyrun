@@ -59,44 +59,31 @@ fn get_matches(input: RString, state: &State) -> RVec<Match> {
     }
 
     state.runtime.block_on(async move {
-        // Create futures for both translation directions
+        // Create a single async function we can reuse
+        async fn get_translation(
+            client: &Client,
+            name: &'static str,
+            sl: &'static str,
+            tl: &'static str,
+            text: &str,
+        ) -> (&'static str, reqwest::Result<reqwest::Response>) {
+            (
+                name,
+                client
+                    .get(format!(
+                        "https://translate.googleapis.com/translate_a/single?client=gtx&sl={}&tl={}&dt=t&q={}",
+                        sl, tl, text
+                    ))
+                    .send()
+                    .await,
+            )
+        }
+
+        // Create the futures for both translation directions
         let futures = [
-            // English to Ukrainian
-            async {
-                (
-                    "English → Ukrainian",
-                    state.client.get(format!(
-                        "https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=uk&dt=t&q={}",
-                        text
-                    ))
-                    .send()
-                    .await
-                )
-            },
-            // Ukrainian to English
-            async {
-                (
-                    "Ukrainian → English",
-                    state.client.get(format!(
-                        "https://translate.googleapis.com/translate_a/single?client=gtx&sl=uk&tl=en&dt=t&q={}",
-                        text
-                    ))
-                    .send()
-                    .await
-                )
-            },
-            // Auto-detect (will be either en→uk or uk→en)
-            async {
-                (
-                    "Auto-detect",
-                    state.client.get(format!(
-                        "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=auto&dt=t&q={}",
-                        text
-                    ))
-                    .send()
-                    .await
-                )
-            },
+            get_translation(&state.client, "English → Ukrainian", "en", "uk", text),
+            get_translation(&state.client, "Ukrainian → English", "uk", "en", text),
+            get_translation(&state.client, "Auto-detect", "auto", "auto", text),
         ];
 
         let results = futures::future::join_all(futures).await;
