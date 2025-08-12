@@ -1,22 +1,11 @@
 use abi_stable::std_types::{ROption, RString, RVec};
 use anyrun_plugin::*;
 use reqwest::Client;
-use serde::Deserialize;
 use tokio::runtime::Runtime;
 
-#[derive(Deserialize)]
+#[derive(Default)]
 struct Config {
     prefix: String,
-    max_entries: usize,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            prefix: "".to_string(),
-            max_entries: 3,
-        }
-    }
 }
 
 struct State {
@@ -26,11 +15,10 @@ struct State {
 }
 
 #[init]
-fn init(config_dir: RString) -> State {
+fn init(_config_dir: RString) -> State {
     State {
-        config: match std::fs::read_to_string(format!("{}/translate.ron", config_dir)) {
-            Ok(content) => ron::from_str(&content).unwrap_or_default(),
-            Err(_) => Config::default(),
+        config: Config {
+            prefix: "".to_string(),
         },
         client: Client::new(),
         runtime: Runtime::new().expect("Failed to create tokio runtime"),
@@ -52,112 +40,67 @@ fn get_matches(input: RString, state: &State) -> RVec<Match> {
     }
 
     // Ignore the prefix
-    let text = &input[state.config.prefix.len()..];
+    let text = input[state.config.prefix.len()..].trim();
     
     if text.is_empty() {
         return RVec::new();
     }
 
+    // Try to detect if the text is Ukrainian (we'll assume English otherwise)
+    let is_ukrainian = text.chars().any(|c| {
+        let cp = c as u32;
+        // Check for Cyrillic characters used in Ukrainian
+        (cp >= 0x0400 && cp <= 0x04FF) ||  // Cyrillic range
+        (cp >= 0x0500 && cp <= 0x052F)     // Cyrillic Supplement
+    });
+
+    let (src_lang, dest_lang) = if is_ukrainian {
+        ("uk", "en")
+    } else {
+        ("en", "uk")
+    };
+
     state.runtime.block_on(async move {
-        // First detect the language
-        let detected_lang = match state.client
+        let response = state.client
             .get(format!(
-                "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=ld&q={}",
-                text
+                "https://translate.googleapis.com/translate_a/single?client=gtx&sl={}&tl={}&dt=t&q={}",
+                src_lang, dest_lang, text
             ))
             .send()
-            .await
-        {
-            Ok(response) => {
-                let json: serde_json::Value = response.json().await.unwrap_or_default();
-                json.get("src")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "en".to_string())
+            .await;
+
+        match response {
+            Ok(resp) => {
+                if let Ok(json) = resp.json::<serde_json::Value>().await {
+                    let translation = json[0]
+                        .as_array()
+                        .expect("Malformed JSON!")
+                        .iter()
+                        .map(|val| val.as_array().expect("Malformed JSON!")[0].as_str()
+                            .expect("Malformed JSON!")
+                        )
+                        .collect::<Vec<_>>()
+                        .join(" ");
+
+                    let detected_lang = json[2].as_str().unwrap_or(src_lang);
+                    let lang_name = if detected_lang == "uk" { "Ukrainian" } else { "English" };
+                    let dest_name = if dest_lang == "uk" { "Ukrainian" } else { "English" };
+
+                    RVec::from(vec![Match {
+                        title: translation.into(),
+                        description: ROption::RSome(
+                            format!("{} → {}", lang_name, dest_name).into()
+                        ),
+                        use_pango: false,
+                        icon: ROption::RNone,
+                        id: ROption::RNone,
+                    }])
+                } else {
+                    RVec::new()
+                }
             }
-            Err(_) => "en".to_string(),
-        };
-
-        // Create translation futures based on detected language
-        let (sl, tl) = if detected_lang == "uk" {
-            ("uk", "en")
-        } else {
-            ("en", "uk")
-        };
-
-        async fn get_translation(
-            client: &Client,
-            name: &'static str,
-            sl: &str,
-            tl: &str,
-            text: &str,
-        ) -> (&'static str, reqwest::Result<reqwest::Response>) {
-            (
-                name,
-                client
-                    .get(format!(
-                        "https://translate.googleapis.com/translate_a/single?client=gtx&sl={}&tl={}&dt=t&q={}",
-                        sl, tl, text
-                    ))
-                    .send()
-                    .await,
-            )
+            Err(_) => RVec::new(),
         }
-
-        // Create the futures for both translation directions and auto-detect
-        let futures = [
-            get_translation(&state.client, "English → Ukrainian", "en", "uk", text),
-            get_translation(&state.client, "Ukrainian → English", "uk", "en", text),
-            get_translation(&state.client, "Auto-detect", sl, tl, text),
-        ];
-
-        let results = futures::future::join_all(futures).await;
-
-        results
-            .into_iter()
-            .filter_map(|(name, res)| {
-                res.ok()
-                    .map(|response| {
-                        futures::executor::block_on(response.json())
-                            .ok()
-                            .map(|json: serde_json::Value| {
-                                let translation = json[0]
-                                    .as_array()
-                                    .expect("Malformed JSON!")
-                                    .iter()
-                                    .map(|val| {
-                                        val.as_array()
-                                            .expect("Malformed JSON!")[0]
-                                            .as_str()
-                                            .expect("Malformed JSON!")
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join(" ");
-                                
-                                let description = if name == "Auto-detect" {
-                                    let direction = if detected_lang == "en" {
-                                        "English → Ukrainian"
-                                    } else {
-                                        "Ukrainian → English"
-                                    };
-                                    format!("{} (detected: {})", direction, detected_lang)
-                                } else {
-                                    name.to_string()
-                                };
-
-                                Match {
-                                    title: translation.into(),
-                                    description: ROption::RSome(description.into()),
-                                    use_pango: false,
-                                    icon: ROption::RNone,
-                                    id: ROption::RNone,
-                                }
-                            })
-                    })
-                    .flatten()
-            })
-            .take(state.config.max_entries)
-            .collect::<RVec<_>>()
     })
 }
 
