@@ -41,8 +41,8 @@ fn init(config_dir: RString) -> State {
         client: Client::new(),
         runtime: Runtime::new().expect("Failed to create tokio runtime"),
         langs: vec![
-            ("en", "English"),
-            ("uk", "Ukrainian"),
+            ("", "English"),
+            ("", "Ukrainian"),
         ],
     }
 }
