@@ -57,23 +57,18 @@ fn info() -> PluginInfo {
 
 #[get_matches]
 fn get_matches(input: RString, state: &State) -> RVec<Match> {
-    if !input.starts_with(&state.config.prefix) {
-        return RVec::new();
-    }
 
     // Ignore the prefix
-    let input = &input[state.config.prefix.len()..];
+    let input = RString::from(format!("{}{}", "lang ", &input));
     let (lang_split, text) = match input.split_once(' ') {
         Some(split) => split,
         None => return RVec::new(),
     };
 
-    let (src, _dest) = match lang_split.split_once(&state.config.language_delimiter) {
+    let (src, dest) = match lang_split.split_once(&state.config.language_delimiter) {
         Some(split) => (Some(split.0), split.1),
         None => (None, lang_split),
     };
-
-    let dest = "lang";
 
     if text.is_empty() {
         return RVec::new();
