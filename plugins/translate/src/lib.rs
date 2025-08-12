@@ -68,12 +68,12 @@ fn get_matches(input: RString, state: &State) -> RVec<Match> {
         None => return RVec::new(),
     };
 
-    let (src, dest) = match lang_split.split_once(&state.config.language_delimiter) {
+    let (src, _dest) = match lang_split.split_once(&state.config.language_delimiter) {
         Some(split) => (Some(split.0), split.1),
         None => (None, lang_split),
     };
 
-    dest = "lang"
+    let dest = "lang"
 
     if text.is_empty() {
         return RVec::new();
