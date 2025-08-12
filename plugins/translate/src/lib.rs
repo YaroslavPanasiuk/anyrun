@@ -60,20 +60,22 @@ fn get_matches(input: RString, state: &State) -> RVec<Match> {
 
     state.runtime.block_on(async move {
         // First detect the language
-        let detection = state.client
+        let detected_lang = match state.client
             .get(format!(
                 "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=ld&q={}",
                 text
             ))
             .send()
-            .await;
-
-        let detected_lang = match detection {
+            .await
+        {
             Ok(response) => {
                 let json: serde_json::Value = response.json().await.unwrap_or_default();
-                json.get("src").and_then(|v| v.as_str()).unwrap_or("en")
+                json.get("src")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "en".to_string())
             }
-            Err(_) => "en",
+            Err(_) => "en".to_string(),
         };
 
         // Create translation futures based on detected language
